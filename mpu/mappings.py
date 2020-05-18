@@ -15,7 +15,13 @@
 
 import torch
 
-from .initialize import get_model_parallel_group
+from fairseq.distributed_utils import (
+    all_gather,
+    all_reduce,
+    get_model_parallel_group,
+    get_rank,
+    get_world_size,
+)
 from .utils import split_tensor_along_last_dim
 
 
@@ -24,11 +30,11 @@ def _reduce(input_):
     group = get_model_parallel_group()
 
     # Bypass the function if we are using only 1 GPU.
-    if torch.distributed.get_world_size(group=group) == 1:
+    if get_world_size(group=group) == 1:
         return input_
 
     # All-reduce.
-    torch.distributed.all_reduce(input_, group=group)
+    all_reduce(input_, group=group)
 
     return input_
 
@@ -39,15 +45,15 @@ def _split(input_):
     group = get_model_parallel_group()
 
     # Bypass the function if we are using only 1 GPU.
-    if torch.distributed.get_world_size(group=group) == 1:
+    if get_world_size(group=group) == 1:
         return input_
 
     # Split along last dimension.
-    world_size = torch.distributed.get_world_size(group=group)
+    world_size = get_world_size(group=group)
     input_list = split_tensor_along_last_dim(input_, world_size)
 
     # Note: torch.split does not create contiguous tensors by default.
-    rank = torch.distributed.get_rank(group=group)
+    rank = get_rank(group=group)
     output = input_list[rank].contiguous()
 
     return output
@@ -58,17 +64,13 @@ def _gather(input_):
     group = get_model_parallel_group()
 
     # Bypass the function if we are using only 1 GPU.
-    if torch.distributed.get_world_size(group=group) == 1:
+    if get_world_size(group=group) == 1:
         return input_
 
     # Size and dimension.
     last_dim = input_.dim() - 1
-    rank = torch.distributed.get_rank(group=group)
-    world_size = torch.distributed.get_world_size(group=group)
 
-    tensor_list = [torch.empty_like(input_) for _ in range(world_size)]
-    tensor_list[rank] = input_
-    torch.distributed.all_gather(tensor_list, input_, group=group)
+    tensor_list = all_gather(tensor=input_, group=group)
 
     # Note: torch.cat already creates a contiguous tensor.
     output = torch.cat(tensor_list, dim=last_dim).contiguous()

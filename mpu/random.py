@@ -29,6 +29,8 @@ from .initialize import get_model_parallel_rank
 
 from torch.utils.checkpoint import check_backward_validity, get_device_states, set_device_states, detach_variable
 
+from fairseq import distributed_utils as dist_utils, utils
+
 
 # Default name for the model parallel rng tracker.
 _MODEL_PARALLEL_RNG_TRACKER_NAME = 'model-parallel-rng'
@@ -138,12 +140,16 @@ class CudaRNGStatesTracker:
 
 
 # RNG tracker object.
-_CUDA_RNG_STATE_TRACKER = CudaRNGStatesTracker()
+# Disabled for fairseq.
+#_CUDA_RNG_STATE_TRACKER = CudaRNGStatesTracker()
+_CUDA_RNG_STATE_TRACKER = None
 
 
 def get_cuda_rng_tracker():
     """Get cuda rng tracker."""
-    return _CUDA_RNG_STATE_TRACKER
+    raise RuntimeError(
+        'Use fairseq.distributed_utils.fork_rng_for_model_parallel instead'
+    )
 
 
 def model_parallel_cuda_manual_seed(seed):
@@ -163,25 +169,7 @@ def model_parallel_cuda_manual_seed(seed):
                               groups. This is used for example for dropout in
                               model parallel regions.
     """
-    # 2718 is just for fun and any POSITIVE value will work.
-    offset = seed + 2718
-    model_parallel_seed = offset + get_model_parallel_rank()
-    # Data parallel gets the original sedd.
-    data_parallel_seed = seed
-
-    if torch.distributed.get_rank() == 0:
-        print('> initializing model parallel cuda seeds on global rank {}, '
-              'model parallel rank {}, and data parallel rank {} with '
-              'model parallel seed: {} and data parallel seed: {}'.format(
-                  torch.distributed.get_rank(), get_model_parallel_rank(),
-                  get_data_parallel_rank(), model_parallel_seed,
-                  data_parallel_seed), flush=True)
-    _CUDA_RNG_STATE_TRACKER.reset()
-    # Set the default state.
-    torch.cuda.manual_seed(data_parallel_seed)
-    # and model parallel state.
-    _CUDA_RNG_STATE_TRACKER.add(_MODEL_PARALLEL_RNG_TRACKER_NAME,
-                                model_parallel_seed)
+    raise RuntimeError('Use fairseq.utils.set_torch_seed instead')
 
 
 class CheckpointFunction(torch.autograd.Function):

@@ -30,8 +30,10 @@ try:
 except ImportError:
     from torch.nn import LayerNorm
 
-from .initialize import get_model_parallel_rank
-from .initialize import get_model_parallel_world_size
+from fairseq.distributed_utils import (
+    get_model_parallel_rank,
+    get_model_parallel_world_size,
+)
 from .mappings import copy_to_model_parallel_region
 from .mappings import gather_from_model_parallel_region
 from .mappings import reduce_from_model_parallel_region
