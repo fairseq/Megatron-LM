@@ -25,7 +25,10 @@ import torch.nn.functional as F
 import torch.nn.init as init
 from torch.nn.parameter import Parameter
 
-from apex.normalization.fused_layer_norm import FusedLayerNorm as LayerNorm
+try:
+    from apex.normalization.fused_layer_norm import FusedLayerNorm as LayerNorm
+except ImportError:
+    from torch.nn import LayerNorm
 
 from .initialize import get_model_parallel_rank
 from .initialize import get_model_parallel_world_size

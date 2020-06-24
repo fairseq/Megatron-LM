@@ -19,7 +19,11 @@ import math
 
 import torch
 import torch.nn.init as init
-from apex.normalization.fused_layer_norm import FusedLayerNorm as LayerNorm
+
+try:
+    from apex.normalization.fused_layer_norm import FusedLayerNorm as LayerNorm
+except ImportError:
+    from torch.nn import LayerNorm
 
 from .initialize import get_model_parallel_world_size
 from .layers import ColumnParallelLinear
@@ -122,7 +126,7 @@ class GPT2ParallelSelfAttention(torch.nn.Module):
         norm_factor = math.sqrt(math.sqrt(self.hidden_size_per_attention_head))
         attention_scores = torch.matmul(query_layer/norm_factor,
                                         key_layer.transpose(-1, -2)/norm_factor)
-                                        
+
         # Apply the left to right attention mask.
         if get_present:
             with torch.no_grad():
