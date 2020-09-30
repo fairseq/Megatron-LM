@@ -175,21 +175,10 @@ def model_parallel_cuda_manual_seed(seed):
 class CheckpointFunction(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, run_function, preserve_rng_state, *args):
+    def forward(ctx, run_function, *args):
         check_backward_validity(args)
         ctx.run_function = run_function
-        ctx.preserve_rng_state = preserve_rng_state
-        ctx.fwd_cuda_rng_state_tracker = get_cuda_rng_tracker().get_states()
-        if preserve_rng_state:
-            ctx.fwd_cpu_state = torch.get_rng_state()
-            # Don't eagerly initialize the cuda context by accident.
-            # (If the user intends that the context is initialized later, within their
-            # run_function, we SHOULD actually stash the cuda state here.  Unfortunately,
-            # we have no way to anticipate this will happen before we run the function.)
-            ctx.had_cuda_in_fwd = False
-            if torch.cuda._initialized:
-                ctx.had_cuda_in_fwd = True
-                ctx.fwd_gpu_devices, ctx.fwd_gpu_states = get_device_states(*args)
+        ctx.fwd_rng_state = utils.get_rng_state()
         ctx.save_for_backward(*args)
         with torch.no_grad():
             outputs = run_function(*args)
@@ -199,34 +188,33 @@ class CheckpointFunction(torch.autograd.Function):
     def backward(ctx, *args):
         if not torch.autograd._is_checkpoint_valid():
             raise RuntimeError("Checkpointing is not compatible with .grad(), please use .backward() if possible")
-        inputs = ctx.saved_tensors
-        # Stash the surrounding rng state, and mimic the state that was
-        # present at this time during forward.  Restore the surrouding state
-        # when we're done.
-        rng_devices = []
-        if ctx.preserve_rng_state and ctx.had_cuda_in_fwd:
-            rng_devices = ctx.fwd_gpu_devices
-        bwd_cuda_rng_state_tracker = get_cuda_rng_tracker().get_states()
-        with torch.random.fork_rng(devices=rng_devices, enabled=ctx.preserve_rng_state):
-            if ctx.preserve_rng_state:
-                torch.set_rng_state(ctx.fwd_cpu_state)
-                if ctx.had_cuda_in_fwd:
-                    set_device_states(ctx.fwd_gpu_devices, ctx.fwd_gpu_states)
-                get_cuda_rng_tracker().set_states(ctx.fwd_cuda_rng_state_tracker)
-            detached_inputs = detach_variable(inputs)
-            with torch.enable_grad():
-                outputs = ctx.run_function(*detached_inputs)
+        inputs = detach_variable(ctx.saved_tensors)
+
+        # Store the current states.
+        bwd_rng_state = utils.get_rng_state()
+
+        # Set the states to what it used to be before the forward pass.
+        utils.set_rng_state(ctx.fwd_rng_state)
+
+        with torch.enable_grad():
+            outputs = ctx.run_function(*inputs)
+
+        # Set the states back to what it was at the start of this function.
+        utils.set_rng_state(bwd_rng_state)
 
         if isinstance(outputs, torch.Tensor):
             outputs = (outputs,)
-        get_cuda_rng_tracker().set_states(bwd_cuda_rng_state_tracker)
+
         torch.autograd.backward(outputs, args)
-        grads = tuple(inp.grad if isinstance(inp, torch.Tensor) else inp
-                      for inp in detached_inputs)
-        return (None, None) + grads
+
+        grads = tuple(
+            inp.grad if isinstance(inp, torch.Tensor) else inp
+            for inp in inputs
+        )
+        return (None,) + grads
 
 
 def checkpoint(function, *args):
     """Checkpoint a model or part of the model.
     This has been directly copied from torch.utils.checkpoint."""
-    return CheckpointFunction.apply(function, True, *args)
+    return CheckpointFunction.apply(function, *args)
